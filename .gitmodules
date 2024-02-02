@@ -1,12 +1,12 @@
+[submodule "components/CAN_COMMS"]
+	path = components/CAN_COMMS
+	url = https://github.com/patoGarces/CAN_COMMS_Components_ESP32
 [submodule "components/MPU6050"]
 	path = components/MPU6050
-	url = https://bitbucket.org/aero_pacio/mpu6050component/src/master/
-[submodule "components/TFMINI"]
-	path = components/TFMINI
-	url = https://bitbucket.org/aero_pacio/tfminicomponent/src/master/
-[submodule "components/CAN_COMM"]
-	path = components/CAN_COMM
-	url = https://bitbucket.org/aero_pacio/can_comms_component/src/master/
+	url = https://github.com/patoGarces/MPU6050_Components_ESP32
 [submodule "components/BT_CLASSIC"]
 	path = components/BT_CLASSIC
-	url = https://bitbucket.org/aero_pacio/bt_classic_component/src/master/
+	url = https://github.com/patoGarces/BT_CLASSIC_Components_ESP32
+[submodule "components/TFMINI"]
+	path = components/TFMINI
+	url = https://github.com/patoGarces/TFMINI_LIDAR_Components_ESP32
