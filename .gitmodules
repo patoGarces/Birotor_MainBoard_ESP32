@@ -1,12 +1,12 @@
-[submodule "components/CAN_COMMS"]
-	path = components/CAN_COMMS
-	url = https://github.com/patoGarces/CAN_COMMS_Components_ESP32
 [submodule "components/MPU6050"]
 	path = components/MPU6050
 	url = https://github.com/patoGarces/MPU6050_Components_ESP32
 [submodule "components/BT_CLASSIC"]
 	path = components/BT_CLASSIC
 	url = https://github.com/patoGarces/BT_CLASSIC_Components_ESP32
-[submodule "components/TFMINI"]
-	path = components/TFMINI
-	url = https://github.com/patoGarces/TFMINI_LIDAR_Components_ESP32
+[submodule "components/SBUS_COMMS"]
+	path = components/SBUS_COMMS
+	url = https://github.com/patoGarces/SBUS_Component_ESP32
+[submodule "components/SERVO_CONTROL"]
+	path = components/SERVO_CONTROL
+	url = https://github.com/patoGarces/SERVO_CONTROL_Components_ESP32

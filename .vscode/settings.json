@@ -39,7 +39,10 @@
         "memory": "c",
         "new": "c",
         "functional": "c",
-        "uart.h": "c"
+        "uart.h": "c",
+        "sbus_comms.h": "c",
+        "servo_control.h": "c",
+        "queue.h": "c"
     },
     "idf.portWin": "COM6",
     "idf.adapterTargetName": "esp32"

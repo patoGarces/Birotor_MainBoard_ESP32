@@ -16,10 +16,19 @@
 
 #define CENTER_ANGLE_MOUNTED    0.00  
 
+#define OUTPUT_INDEX_MOT_L      0
+#define OUTPUT_INDEX_MOT_R      1
+#define OUTPUT_INDEX_SERVO_L    2
+#define OUTPUT_INDEX_SERVO_R    3
+
 typedef struct{
-    int16_t motorR;
-    int16_t motorL;
-}output_motors_t;
+    uint8_t motorL;
+    uint8_t motorR;
+    uint8_t servoL;
+    uint8_t servoR;
+    uint16_t throttleOutput;
+    uint8_t motorArmed;
+}drone_status_t;
 
 enum{
     STATUS_ROBOT_INIT,

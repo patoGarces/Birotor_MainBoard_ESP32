@@ -1,29 +1,31 @@
+#include "stdio.h"
+#include "main.h"
 #include "driver/gpio.h"
 #include "soc/gpio_periph.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "stdio.h"
-
-#include "main.h"
+#include "freertos/queue.h"
+#include "esp_log.h"
 #include "comms.h"
 #include "PID.h"
 #include "storage_flash.h"
-#include "stepper.h"
-
 
 /* Incluyo componentes */
 #include "../components/MPU6050/include/MPU6050.h"
-#include "../components/TFMINI/include/tfMini.h"
-#include "../components/CAN_COMM/include/CAN_COMMS.h"
+#include "../components/SBUS_COMMS/include/SBUS_COMMS.h"
 #include "../components/BT_CLASSIC/include/BT_CLASSIC.h"
-#include "../components/SBUS_RECEIVER/include/SBUS_RECEIVER.h"
+#include "../components/SERVO_CONTROL/include/SERVO_CONTROL.h"
+
 
 #define GRAPH_ARDUINO_PLOTTER   false
 #define MAX_VELOCITY            1000
 #define VEL_MAX_CONTROL         5    
-#define DEVICE_BT_NAME          "Balancing robot"
+#define DEVICE_BT_NAME          "Birotor Drone"
+
+#define VEL_MOTORS_ARMED        10
 
 extern QueueSetHandle_t newAnglesQueue;                 // Recibo nuevos angulos obtenidos del MPU
+extern QueueHandle_t queueNewSBUS;
 QueueHandle_t queueNewPidParams;                        // Recibo nuevos parametros relacionados al pid
 QueueSetHandle_t outputMotorQueue;                      // Envio nuevos valores de salida para el control de motores
 
@@ -31,16 +33,23 @@ QueueHandle_t queueReceiveControl;
 
 status_robot_t statusToSend;                            // Estructura que contiene todos los parametros de status a enviar a la app
 
-output_motors_t attitudeControlMotor;
+drone_status_t droneStatus;
+
+uint8_t cutRangeExceed(int16_t value){
+    if( value > 100){
+        return 100;
+    }
+    if( value < 0 ){
+        return 0;
+    }
+    return value;
+}
 
 static void imuControlHandler(void *pvParameters){
     float newAngles[3];
     float outputPid;
-    output_motors_t outputMotors;
 
     uint32_t cont = 0;
-
-    outputMotorQueue = xQueueCreate(5,sizeof(output_motors_t));
 
     while(1){
 
@@ -54,31 +63,28 @@ static void imuControlHandler(void *pvParameters){
             statusToSend.yaw = newAngles[AXIS_ANGLE_Z];
 
             outputPid = pidCalculate(newAngles[AXIS_ANGLE_Y]) *-1; 
-            outputMotors.motorL = outputPid * MAX_VELOCITY;
-            outputMotors.motorR = outputMotors.motorL;
+            // outputMotors.motorL = outputPid * MAX_VELOCITY;
+            // outputMotors.motorR = outputMotors.motorL;
 
-            // xQueueSend(outputMotorQueue,(void*) &outputMotors,0);                           // TODO: falta recibir los datos de esta cola y enviarlos a los motores
-            setVelMotors(outputMotors.motorL,outputMotors.motorR);
-
-            statusToSend.speedL = outputMotors.motorL;
-            statusToSend.speedR = outputMotors.motorR;
+            // statusToSend.speedL = outputMotors.motorL;
+            // statusToSend.speedR = outputMotors.motorR;
 
             // Envio data a los motores
             // sendMotorData(outputMotors.motorR,outputMotors.motorL,0x00,0x00);            // TODO: controlar el enable
 
             if(!getEnablePid()){ 
                 if((( newAngles[AXIS_ANGLE_Y] > (CENTER_ANGLE_MOUNTED-1)) && ( newAngles[AXIS_ANGLE_Y] < (CENTER_ANGLE_MOUNTED+1) )) ){ 
-                    enableMotors();
+                    // enableMotors();
                     setEnablePid();   
                     statusToSend.status_code = STATUS_ROBOT_STABILIZED;                                                       
                 }
                 else{
-                    disableMotors();
+                    // disableMotors();
                 }
             }
             else{ 
                 if((( newAngles[AXIS_ANGLE_Y] < (CENTER_ANGLE_MOUNTED-statusToSend.safetyLimits)) || ( newAngles[AXIS_ANGLE_Y] > (CENTER_ANGLE_MOUNTED+statusToSend.safetyLimits) )) ){ 
-                    disableMotors();
+                    // disableMotors();
                     setDisablePid();
                     statusToSend.status_code = STATUS_ROBOT_DISABLE; 
                 }
@@ -86,13 +92,13 @@ static void imuControlHandler(void *pvParameters){
 
             if(GRAPH_ARDUINO_PLOTTER){
                 //Envio log para graficar en arduino serial plotter
-                printf("angle_x:%f,set_point: %f,output_pid: %f, output_motor:%d\n",newAngles[AXIS_ANGLE_Y],CENTER_ANGLE_MOUNTED,outputPid,outputMotors.motorL);
+                // printf("angle_x:%f,set_point: %f,output_pid: %f, output_motor:%d\n",newAngles[AXIS_ANGLE_Y],CENTER_ANGLE_MOUNTED,outputPid,outputMotors.motorL);
             }
             // gpio_set_level(PIN_OSCILO, 0);
 
             cont++;
             if(cont>10){
-                printf("angle:%f,set_point: %f,output_pid: %f, output_motor:%d\n",newAngles[AXIS_ANGLE_Y],CENTER_ANGLE_MOUNTED,outputPid,outputMotors.motorL);
+                // printf("angle:%f,set_point: %f,output_pid: %f, output_motor:%d\n",newAngles[AXIS_ANGLE_Y],CENTER_ANGLE_MOUNTED,outputPid,outputMotors.motorL);
                 cont=0;
             }
         }
@@ -128,26 +134,75 @@ static void attitudeControl(void *pvParameters){
     queueReceiveControl = xQueueCreate(1, sizeof(control_app_t));
 
     control_app_t newControlVal;
+    channels_control_t newControlMessage;
 
     while(true){
-        if( xQueueReceive(queueReceiveControl,
-                         &newControlVal,
-                         ( TickType_t ) 1 ) == pdPASS ){
+        // if( xQueueReceive(queueReceiveControl,
+        //                  &newControlVal,
+        //                  ( TickType_t ) 1 ) == pdPASS ){
 
-            attitudeControlMotor.motorL = newControlVal.axis_x * -1 * VEL_MAX_CONTROL + newControlVal.axis_y * -1 * VEL_MAX_CONTROL;
-            attitudeControlMotor.motorR = newControlVal.axis_x *  VEL_MAX_CONTROL + newControlVal.axis_y * -1 * VEL_MAX_CONTROL;
+            // attitudeControlMotor.motorL = newControlVal.axis_x * -1 * VEL_MAX_CONTROL + newControlVal.axis_y * -1 * VEL_MAX_CONTROL;
+            // attitudeControlMotor.motorR = newControlVal.axis_x *  VEL_MAX_CONTROL + newControlVal.axis_y * -1 * VEL_MAX_CONTROL;
             
-            setVelMotors(attitudeControlMotor.motorL,attitudeControlMotor.motorR);
+            // // setVelMotors(attitudeControlMotor.motorL,attitudeControlMotor.motorR);
 
-            if( !attitudeControlMotor.motorL && !attitudeControlMotor.motorR){
-                disableMotors();
-            }
-            else{
-                enableMotors();
+            // if( !attitudeControlMotor.motorL && !attitudeControlMotor.motorR){
+            //     // disableMotors();
+            // }
+            // else{
+            //     // enableMotors();
+            // }
+
+            // printf("CONTROL RECIBIDO: X: %ld, Y: %ld, motorL: %d ,motorR: %d \n",newControlVal.axis_x,newControlVal.axis_y,attitudeControlMotor.motorL,attitudeControlMotor.motorR);
+        // } 
+
+        if( xQueueReceive(queueNewSBUS,&newControlMessage, 0)){
+
+            int16_t outputServoL = (int8_t)(newControlMessage.elevator-50) + (int8_t)(newControlMessage.aileron-50) + 50;
+            int16_t outputServoR = -(int8_t)(newControlMessage.elevator-50) + (int8_t)(newControlMessage.aileron-50) + 50;
+            
+            droneStatus.servoL = cutRangeExceed(outputServoL);
+            droneStatus.servoR = cutRangeExceed(outputServoR);
+
+            setChannelOutput(OUTPUT_INDEX_SERVO_L,droneStatus.servoL);
+            setChannelOutput(OUTPUT_INDEX_SERVO_R,droneStatus.servoR);
+
+            if (droneStatus.motorArmed){
+
+                if( newControlMessage.throttle >= 50){
+                    droneStatus.throttleOutput = VEL_MOTORS_ARMED + (((newControlMessage.throttle - 50) *90.00) / 50.00);
+
+                    // ESP_LOGE("attitudeControl","throttle: %d",droneStatus.throttleOutput);
+
+                    // droneStatus.throttleOutput = cutRangeExceed(droneStatus.throttleOutput);
+                    // droneStatus.motorR = cutRangeExceed(droneStatus.throttleOutput);
+                    droneStatus.motorR = droneStatus.throttleOutput;
+                    droneStatus.motorL = droneStatus.throttleOutput;
+                }
+                // else{
+                //     outputMotors = VEL_MOTORS_ARMED;
+                // }
             }
 
-            printf("CONTROL RECIBIDO: X: %ld, Y: %ld, motorL: %d ,motorR: %d \n",newControlVal.axis_x,newControlVal.axis_y,attitudeControlMotor.motorL,attitudeControlMotor.motorR);
-        } 
+            if (!droneStatus.motorArmed && newControlMessage.s1 == SW_POS_2){
+                droneStatus.motorArmed = true;
+                droneStatus.motorL = VEL_MOTORS_ARMED;
+                droneStatus.motorR = VEL_MOTORS_ARMED;
+                droneStatus.throttleOutput = VEL_MOTORS_ARMED;
+            }
+            else if(droneStatus.motorArmed && newControlMessage.s1 != SW_POS_2){
+                droneStatus.motorArmed = false;
+                droneStatus.motorL = 0;
+                droneStatus.motorR = 0;
+                droneStatus.throttleOutput = 0;
+            }
+
+            setChannelOutput(OUTPUT_INDEX_MOT_L,droneStatus.motorL);
+            setChannelOutput(OUTPUT_INDEX_MOT_R,droneStatus.motorR);
+            ESP_LOGE("attitudeControl","throttle: %d, servoL: %d, servoR: %d, motorL: %d, motorR: %d",newControlMessage.throttle,droneStatus.servoL,droneStatus.servoR,droneStatus.motorL,droneStatus.motorR);
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
 
@@ -164,60 +219,43 @@ void app_main() {
 
     storageInit();
 
-    btInit( DEVICE_BT_NAME );
-    mpu_init();
-    readParams = storageReadPidParams();
-    printf("center: %f kp: %f , ki: %f , kd: %f,safetyLimits: %f\n",readParams.center_angle,readParams.kp,readParams.ki,readParams.kd,readParams.safety_limits);
-    pidInit(readParams);
+    // btInit( DEVICE_BT_NAME );
+    // mpu_init();
+    // readParams = storageReadPidParams();
+    // printf("center: %f kp: %f , ki: %f , kd: %f,safetyLimits: %f\n",readParams.center_angle,readParams.kp,readParams.ki,readParams.kd,readParams.safety_limits);
+    // pidInit(readParams);
 
-    // setMicroSteps(true);
+    pwmServoInit();
+    sbusInit();
+    setChannelOutput(2,50);
 
-    // for(uint16_t i=0;i<1000;i++){
-    //     setVelMotors(i,i);
-
-    //     printf("vel: %d\n",i);
-    //     vTaskDelay(pdMS_TO_TICKS(10));
-    // }
-
-    // for(int i=1000;i>0;i--){
-    //     setVelMotors(i,i);
-    //     printf("vel: %d\n",i);
-    //     vTaskDelay(pdMS_TO_TICKS(10));
-    // }
-    // setVelMotors(0,0);
-
-    while(true){
-        vTaskDelay(10);
-    }
-
-    // tfMiniInit();
-    // canInit(GPIO_CAN_TX,GPIO_CAN_RX,UART_PORT_CAN);
-
-    xTaskCreatePinnedToCore(imuControlHandler,"Imu Control Task",4096,NULL,IMU_HANDLER_PRIORITY,NULL,IMU_HANDLER_CORE);
-    xTaskCreate(updateParams,"Update Params Task",2048,NULL,3,NULL);
+    // xTaskCreatePinnedToCore(imuControlHandler,"Imu Control Task",4096,NULL,IMU_HANDLER_PRIORITY,NULL,IMU_HANDLER_CORE);
+    // xTaskCreate(updateParams,"Update Params Task",2048,NULL,3,NULL);
     xTaskCreate(attitudeControl,"attitude control Task",2048,NULL,4,NULL);
 
-    setVelMotors(0,0);
-
-    while(1){
-        
-        if(btIsConnected()){
-            cont1++;
-            if(cont1>50){
-                cont1 =0;
-            }
-            statusToSend.header = HEADER_COMMS;
-            statusToSend.bat_voltage = 10;
-            statusToSend.bat_percent = 55;
-            statusToSend.batTemp = 100-cont1;
-            statusToSend.temp_uc_control = cont1;
-            statusToSend.temp_uc_main = 123-cont1; 
-            // statusToSend.status_code = 0;
-            sendStatus(statusToSend);
-        }
-        gpio_set_level(PIN_LED,1);
-        vTaskDelay(pdMS_TO_TICKS(50));
-        gpio_set_level(PIN_LED,0);
-        vTaskDelay(pdMS_TO_TICKS(50));
+    while(true){
+        vTaskDelay(20);
     }
+
+    // while(1){
+        
+    //     if(btIsConnected()){
+    //         cont1++;
+    //         if(cont1>50){
+    //             cont1 =0;
+    //         }
+    //         statusToSend.header = HEADER_COMMS;
+    //         statusToSend.bat_voltage = 10;
+    //         statusToSend.bat_percent = 55;
+    //         statusToSend.batTemp = 100-cont1;
+    //         statusToSend.temp_uc_control = cont1;
+    //         statusToSend.temp_uc_main = 123-cont1; 
+    //         // statusToSend.status_code = 0;
+    //         sendStatus(statusToSend);
+    //     }
+    //     gpio_set_level(PIN_LED,1);
+    //     vTaskDelay(pdMS_TO_TICKS(50));
+    //     gpio_set_level(PIN_LED,0);
+    //     vTaskDelay(pdMS_TO_TICKS(50));
+    // }
 }
