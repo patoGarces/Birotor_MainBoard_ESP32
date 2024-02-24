@@ -42,7 +42,10 @@
         "uart.h": "c",
         "sbus_comms.h": "c",
         "servo_control.h": "c",
-        "queue.h": "c"
+        "queue.h": "c",
+        "memory.h": "c",
+        "gps_ubx.h": "c",
+        "string.h": "c"
     },
     "idf.portWin": "COM6",
     "idf.adapterTargetName": "esp32"

@@ -10,3 +10,6 @@
 [submodule "components/SERVO_CONTROL"]
 	path = components/SERVO_CONTROL
 	url = https://github.com/patoGarces/SERVO_CONTROL_Components_ESP32
+[submodule "components/GPS_UBX"]
+	path = components/GPS_UBX
+	url = https://github.com/patoGarces/GPS_UBX

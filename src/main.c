@@ -9,12 +9,14 @@
 #include "comms.h"
 #include "PID.h"
 #include "storage_flash.h"
+#include "driver/uart.h"
 
 /* Incluyo componentes */
 #include "../components/MPU6050/include/MPU6050.h"
 #include "../components/SBUS_COMMS/include/SBUS_COMMS.h"
 #include "../components/BT_CLASSIC/include/BT_CLASSIC.h"
 #include "../components/SERVO_CONTROL/include/SERVO_CONTROL.h"
+#include "../components/GPS_UBX/include/GPS_UBX.h"
 
 
 #define GRAPH_ARDUINO_PLOTTER   false
@@ -23,6 +25,14 @@
 #define DEVICE_BT_NAME          "Birotor Drone"
 
 #define VEL_MOTORS_ARMED        10
+
+#define CH_AIL_GAIN             0.5 
+#define CH_RUD_GAIN             1 
+#define CH_ELEV_GAIN            1 
+
+#define DUAL_RATES_SOFT         20
+#define DUAL_RATES_MEDIUM       40
+#define DUAL_RATES_HARD         80
 
 extern QueueSetHandle_t newAnglesQueue;                 // Recibo nuevos angulos obtenidos del MPU
 extern QueueHandle_t queueNewSBUS;
@@ -33,14 +43,14 @@ QueueHandle_t queueReceiveControl;
 
 status_robot_t statusToSend;                            // Estructura que contiene todos los parametros de status a enviar a la app
 
-drone_status_t droneStatus;
+drone_control_t droneControl;
 
-uint8_t cutRangeExceed(int16_t value){
-    if( value > 100){
-        return 100;
+uint8_t cutRangeExceed(int16_t value,uint8_t min,uint8_t max){
+    if( value > max){
+        return max;
     }
-    if( value < 0 ){
-        return 0;
+    if( value < min ){
+        return min;
     }
     return value;
 }
@@ -158,48 +168,54 @@ static void attitudeControl(void *pvParameters){
 
         if( xQueueReceive(queueNewSBUS,&newControlMessage, 0)){
 
-            int16_t outputServoL = (int8_t)(newControlMessage.elevator-50) + (int8_t)(newControlMessage.aileron-50) + 50;
-            int16_t outputServoR = -(int8_t)(newControlMessage.elevator-50) + (int8_t)(newControlMessage.aileron-50) + 50;
+            if (!droneControl.motorArmed && newControlMessage.s1 == SW_POS_2){
+                droneControl.motorArmed = true;
+                droneControl.motorL = VEL_MOTORS_ARMED;
+                droneControl.motorR = VEL_MOTORS_ARMED;
+            }
+            else if(droneControl.motorArmed && newControlMessage.s1 != SW_POS_2){
+                droneControl.motorArmed = false;
+                droneControl.motorL = 0;
+                droneControl.motorR = 0;
+            }
+
+            switch(newControlMessage.s2){
+                case SW_POS_1:
+                    droneControl.dualRates = DUAL_RATES_SOFT;
+                break;
+                case SW_POS_2:
+                    droneControl.dualRates = DUAL_RATES_MEDIUM;
+                break;
+                case SW_POS_3:
+                    droneControl.dualRates = DUAL_RATES_HARD;
+                break;
+            }
+
+            int16_t mixedServoL = (int8_t)(newControlMessage.elevator-50)*CH_ELEV_GAIN * (droneControl.dualRates/100.00) + (int8_t)(newControlMessage.rudder-50)*CH_RUD_GAIN * (droneControl.dualRates/100.00) + 50;
+            int16_t mixedServoR = -(int8_t)(newControlMessage.elevator-50)*CH_ELEV_GAIN * (droneControl.dualRates/100.00) + (int8_t)(newControlMessage.rudder-50)*CH_RUD_GAIN * (droneControl.dualRates/100.00) + 50;
             
-            droneStatus.servoL = cutRangeExceed(outputServoL);
-            droneStatus.servoR = cutRangeExceed(outputServoR);
+            droneControl.servoL = cutRangeExceed(mixedServoL,0,100);           // TODO: inicializar dualrates por seguridad
+            droneControl.servoR = cutRangeExceed(mixedServoR,0,100);
 
-            setChannelOutput(OUTPUT_INDEX_SERVO_L,droneStatus.servoL);
-            setChannelOutput(OUTPUT_INDEX_SERVO_R,droneStatus.servoR);
+            setChannelOutput(OUTPUT_INDEX_SERVO_L,droneControl.servoL);
+            setChannelOutput(OUTPUT_INDEX_SERVO_R,droneControl.servoR);
 
-            if (droneStatus.motorArmed){
+            if (droneControl.motorArmed){
 
                 if( newControlMessage.throttle >= 50){
-                    droneStatus.throttleOutput = VEL_MOTORS_ARMED + (((newControlMessage.throttle - 50) *90.00) / 50.00);
+                    int16_t mixedMotorL = (int8_t)(newControlMessage.throttle-50) + (int8_t)(newControlMessage.aileron-50)*CH_AIL_GAIN * (droneControl.dualRates/100.00) + 50;
+                    int16_t mixedMotorR = (int8_t)(newControlMessage.throttle-50) - (int8_t)(newControlMessage.aileron-50)*CH_AIL_GAIN * (droneControl.dualRates/100.00) + 50;
+                    mixedMotorL = cutRangeExceed(mixedMotorL,0,100);
+                    mixedMotorR = cutRangeExceed(mixedMotorR,0,100);
 
-                    // ESP_LOGE("attitudeControl","throttle: %d",droneStatus.throttleOutput);
-
-                    // droneStatus.throttleOutput = cutRangeExceed(droneStatus.throttleOutput);
-                    // droneStatus.motorR = cutRangeExceed(droneStatus.throttleOutput);
-                    droneStatus.motorR = droneStatus.throttleOutput;
-                    droneStatus.motorL = droneStatus.throttleOutput;
+                    droneControl.motorL = cutRangeExceed(VEL_MOTORS_ARMED + (((mixedMotorL - 50) *90.00) / 50.00),10,100);
+                    droneControl.motorR = cutRangeExceed(VEL_MOTORS_ARMED + (((mixedMotorR - 50) *90.00) / 50.00),10,100);
                 }
-                // else{
-                //     outputMotors = VEL_MOTORS_ARMED;
-                // }
             }
 
-            if (!droneStatus.motorArmed && newControlMessage.s1 == SW_POS_2){
-                droneStatus.motorArmed = true;
-                droneStatus.motorL = VEL_MOTORS_ARMED;
-                droneStatus.motorR = VEL_MOTORS_ARMED;
-                droneStatus.throttleOutput = VEL_MOTORS_ARMED;
-            }
-            else if(droneStatus.motorArmed && newControlMessage.s1 != SW_POS_2){
-                droneStatus.motorArmed = false;
-                droneStatus.motorL = 0;
-                droneStatus.motorR = 0;
-                droneStatus.throttleOutput = 0;
-            }
-
-            setChannelOutput(OUTPUT_INDEX_MOT_L,droneStatus.motorL);
-            setChannelOutput(OUTPUT_INDEX_MOT_R,droneStatus.motorR);
-            ESP_LOGE("attitudeControl","throttle: %d, servoL: %d, servoR: %d, motorL: %d, motorR: %d",newControlMessage.throttle,droneStatus.servoL,droneStatus.servoR,droneStatus.motorL,droneStatus.motorR);
+            setChannelOutput(OUTPUT_INDEX_MOT_L,droneControl.motorL);
+            setChannelOutput(OUTPUT_INDEX_MOT_R,droneControl.motorR);
+            ESP_LOGE("attitudeControl","thr: %d, servoL: %d, servoR: %d, motorL: %d, motorR: %d, dualRates: %d",newControlMessage.throttle,droneControl.servoL,droneControl.servoR,droneControl.motorL,droneControl.motorR,droneControl.dualRates);
         }
 
         vTaskDelay(pdMS_TO_TICKS(10));
@@ -225,13 +241,15 @@ void app_main() {
     // printf("center: %f kp: %f , ki: %f , kd: %f,safetyLimits: %f\n",readParams.center_angle,readParams.kp,readParams.ki,readParams.kd,readParams.safety_limits);
     // pidInit(readParams);
 
-    pwmServoInit();
-    sbusInit();
-    setChannelOutput(2,50);
+    // pwmServoInit();
+    // sbusInit();
+    // setChannelOutput(2,50);
 
     // xTaskCreatePinnedToCore(imuControlHandler,"Imu Control Task",4096,NULL,IMU_HANDLER_PRIORITY,NULL,IMU_HANDLER_CORE);
     // xTaskCreate(updateParams,"Update Params Task",2048,NULL,3,NULL);
-    xTaskCreate(attitudeControl,"attitude control Task",2048,NULL,4,NULL);
+    // xTaskCreate(attitudeControl,"attitude control Task",2048,NULL,4,NULL);
+
+    gpsUbxInit(UART_NUM_2,57600,16,17);
 
     while(true){
         vTaskDelay(20);

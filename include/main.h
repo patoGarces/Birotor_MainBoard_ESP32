@@ -26,9 +26,9 @@ typedef struct{
     uint8_t motorR;
     uint8_t servoL;
     uint8_t servoR;
-    uint16_t throttleOutput;
+    uint8_t dualRates;
     uint8_t motorArmed;
-}drone_status_t;
+}drone_control_t;
 
 enum{
     STATUS_ROBOT_INIT,
