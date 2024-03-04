@@ -13,3 +13,6 @@
 [submodule "components/GPS_UBX"]
 	path = components/GPS_UBX
 	url = https://github.com/patoGarces/GPS_UBX
+[submodule "components/WS2812"]
+	path = components/WS2812
+	url = https://github.com/patoGarces/WS2812

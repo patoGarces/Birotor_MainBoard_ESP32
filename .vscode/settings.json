@@ -45,8 +45,10 @@
         "queue.h": "c",
         "memory.h": "c",
         "gps_ubx.h": "c",
-        "string.h": "c"
+        "string.h": "c",
+        "ws2812.h": "c",
+        "i2s.h": "c"
     },
-    "idf.portWin": "COM6",
+    "idf.portWin": "COM12",
     "idf.adapterTargetName": "esp32"
 }

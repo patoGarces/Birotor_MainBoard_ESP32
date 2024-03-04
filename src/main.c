@@ -17,6 +17,7 @@
 #include "../components/BT_CLASSIC/include/BT_CLASSIC.h"
 #include "../components/SERVO_CONTROL/include/SERVO_CONTROL.h"
 #include "../components/GPS_UBX/include/GPS_UBX.h"
+#include "../components/WS2812/include/WS2812.h"
 
 
 #define GRAPH_ARDUINO_PLOTTER   false
@@ -197,8 +198,8 @@ static void attitudeControl(void *pvParameters){
             droneControl.servoL = cutRangeExceed(mixedServoL,0,100);           // TODO: inicializar dualrates por seguridad
             droneControl.servoR = cutRangeExceed(mixedServoR,0,100);
 
-            setChannelOutput(OUTPUT_INDEX_SERVO_L,droneControl.servoL);
-            setChannelOutput(OUTPUT_INDEX_SERVO_R,droneControl.servoR);
+            setChannelOutput(OUTPUT_CHANNEL_SERVO_L,droneControl.servoL);
+            setChannelOutput(OUTPUT_CHANNEL_SERVO_R,droneControl.servoR);
 
             if (droneControl.motorArmed){
 
@@ -213,13 +214,51 @@ static void attitudeControl(void *pvParameters){
                 }
             }
 
-            setChannelOutput(OUTPUT_INDEX_MOT_L,droneControl.motorL);
-            setChannelOutput(OUTPUT_INDEX_MOT_R,droneControl.motorR);
+            setChannelOutput(OUTPUT_CHANNEL_MOT_L,droneControl.motorL);
+            setChannelOutput(OUTPUT_CHANNEL_MOT_R,droneControl.motorR);
             ESP_LOGE("attitudeControl","thr: %d, servoL: %d, servoR: %d, motorL: %d, motorR: %d, dualRates: %d",newControlMessage.throttle,droneControl.servoL,droneControl.servoR,droneControl.motorL,droneControl.motorR,droneControl.dualRates);
         }
 
         vTaskDelay(pdMS_TO_TICKS(10));
     }
+}
+
+
+void initializeTest(void){
+    uint8_t posTest;
+
+    setChannelOutput(OUTPUT_CHANNEL_SERVO_L,50);
+    setChannelOutput(OUTPUT_CHANNEL_SERVO_R,50);
+    vTaskDelay(pdMS_TO_TICKS(200));
+
+    for(posTest = 0; posTest < 100; posTest++){
+        setChannelOutput(OUTPUT_CHANNEL_SERVO_L,posTest);
+        setChannelOutput(OUTPUT_CHANNEL_SERVO_R,posTest);
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+
+    for(posTest = 100; posTest > 0; posTest--){
+        setChannelOutput(OUTPUT_CHANNEL_SERVO_L,posTest);
+        setChannelOutput(OUTPUT_CHANNEL_SERVO_R,posTest);
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+
+    for(posTest = 0; posTest < 2; posTest++){
+        setChannelOutput(OUTPUT_CHANNEL_SERVO_L,50);
+        setChannelOutput(OUTPUT_CHANNEL_SERVO_R,50);
+        vTaskDelay(pdMS_TO_TICKS(200));
+
+        setChannelOutput(OUTPUT_CHANNEL_SERVO_L,0);
+        setChannelOutput(OUTPUT_CHANNEL_SERVO_R,100);
+        vTaskDelay(pdMS_TO_TICKS(200));
+
+        setChannelOutput(OUTPUT_CHANNEL_SERVO_L,100);
+        setChannelOutput(OUTPUT_CHANNEL_SERVO_R,0);
+        vTaskDelay(pdMS_TO_TICKS(200));
+    }
+
+    setChannelOutput(OUTPUT_CHANNEL_SERVO_L,50);
+    setChannelOutput(OUTPUT_CHANNEL_SERVO_R,50);
 }
 
 void app_main() {
@@ -234,6 +273,7 @@ void app_main() {
     gpio_set_level(PIN_OSCILO, 0);
 
     storageInit();
+    statusLedInit(GPIO_LED_STATUS);
 
     // btInit( DEVICE_BT_NAME );
     // mpu_init();
@@ -241,21 +281,29 @@ void app_main() {
     // printf("center: %f kp: %f , ki: %f , kd: %f,safetyLimits: %f\n",readParams.center_angle,readParams.kp,readParams.ki,readParams.kd,readParams.safety_limits);
     // pidInit(readParams);
 
-    // pwmServoInit();
-    // sbusInit();
-    // setChannelOutput(2,50);
+    pwmServoInit(GPIO_MOTOR_L,GPIO_MOTOR_R,GPIO_SERVO_L,GPIO_SERVO_R,GPIO_LED_MOTOR_L,GPIO_LED_MOTOR_R);
+    sbusInit(UART_SBUS_NUM,GPIO_SBUS_TX,GPIO_SBUS_RX);
+    setChannelOutput(2,50);
+
+    initializeTest();
 
     // xTaskCreatePinnedToCore(imuControlHandler,"Imu Control Task",4096,NULL,IMU_HANDLER_PRIORITY,NULL,IMU_HANDLER_CORE);
     // xTaskCreate(updateParams,"Update Params Task",2048,NULL,3,NULL);
-    // xTaskCreate(attitudeControl,"attitude control Task",2048,NULL,4,NULL);
+    xTaskCreate(attitudeControl,"attitude control Task",2048,NULL,4,NULL);
 
-    gpsUbxInit(UART_NUM_2,57600,16,17);
+    // gpsUbxInit(UART_GPS_NUM,BAUDRATE_GPS_UBX,GPIO_GPS_RX,GPIO_GPS_TX);
+    
+    statusLedUpdate(STATUS_LED_CALIBRATION_IMU);
 
-    while(true){
-        vTaskDelay(20);
-    }
+    // while(true) {
+    //     for(uint8_t i=0;i<6;i++) {
+    //         printf("StatusLed: %d\n",i);
+    //         statusLedUpdate(i);
+    //         vTaskDelay(pdMS_TO_TICKS(3000));
+    //     }
+    // }
 
-    // while(1){
+    while(1){
         
     //     if(btIsConnected()){
     //         cont1++;
@@ -274,6 +322,6 @@ void app_main() {
     //     gpio_set_level(PIN_LED,1);
     //     vTaskDelay(pdMS_TO_TICKS(50));
     //     gpio_set_level(PIN_LED,0);
-    //     vTaskDelay(pdMS_TO_TICKS(50));
-    // }
+        vTaskDelay(pdMS_TO_TICKS(50));
+    }
 }
