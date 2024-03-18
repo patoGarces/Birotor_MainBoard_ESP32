@@ -1,94 +1,95 @@
 #include "PID.h"
-#include "stdio.h"
-#include "main.h"
 
-float ITerm = 0.00, lastInput = 0.00;
-float sampleTimeInSec = ((float)PERIOD_IMU_MS)/1000;
+#include "stdio.h"
 
 pid_control_t pidControl1;
 
-float normalizeAngle( float angle );
+float normalize(float value);
 
-void pidInit(pid_params_t params){															
-
-	pidControl1.enablePID = 0;
-	ITerm = 0.00;
-	lastInput = 0.00;
-	pidSetConstants(params.kp,params.ki,params.kd);
-	pidSetPointAngle(params.center_angle);
+esp_err_t pidInit(pid_init_t initParams) {
+    if (initParams.sampleTimeInMs > 1000.00 || initParams.sampleTimeInMs < 1.00) {
+        return ESP_FAIL;
+    }
+    pidControl1.sampleTimeInSec = (float)initParams.sampleTimeInMs / 1000;
+    pidControl1.enablePID = false;
+    pidSetConstants(initParams.kp, initParams.ki, initParams.kd);
+    pidSetSetPoint(initParams.initSetPoint);
+    return ESP_OK;
 }
 
-void setEnablePid(void){ 
-	pidControl1.enablePID = true;
+void pidSetEnable(void) {
+    pidControl1.enablePID = true;
 }
 
-void setDisablePid(void){
-	pidControl1.enablePID = false;
+void pidSetDisable(void) {
+    pidControl1.enablePID = false;
 }
 
-bool getEnablePid(void){
-	return pidControl1.enablePID;
+bool pidGetEnable(void) {
+    return pidControl1.enablePID;
 }
 
-float normalizeAngle( float angle ){
-	return (angle / 100);
+float normalize(float value) {
+    return (value / 100.00);
 }
 
-float cutNormalizeLimits( float normalizeInput ){
-	if(normalizeInput > 1.00){																	//recorto el termino integral maximo
-		return 1.00;
-	}
-	else if(normalizeInput < -1.00){																//recorto el termino intgral minimo
-		return -1.00;
-	}
-	else{
-		return normalizeInput;
-	}
-	
+float cutNormalizeLimits(float normalizeInput) {
+    if (normalizeInput > 1.00) {  // recorto el termino integral maximo
+        return 1.00;
+    } else if (normalizeInput < -1.00) {  // recorto el termino intgral minimo
+        return -1.00;
+    }
+    return normalizeInput;
 }
 
 /*
- * Esta funcion debe ser llamada cada un periodo fijo definido en periodoPID
- * @param input en grados
- * @return resultado del PID normalizado 
+ * Esta funcion debe ser llamada cada un periodo fijo definido en pidControl1.sampleTime
+ * @param input entra en rango [-100;100]
+ * @return resultado del PID normalizado [-1.00;1.00]
  */
-float pidCalculate( float input ){
-	
-	if( !pidControl1.enablePID ){
-		 return 0;
-	}
-	pidControl1.input = normalizeAngle( input );
-	float error = pidControl1.setPoint - pidControl1.input;							//calculo P: resto error entre el valor seteado y el de entrada 		
-	ITerm += sampleTimeInSec * error * pidControl1.ki;									//calculo I: acumulo error ya multiplicado por ki
-	float dInput = (pidControl1.input - lastInput) / sampleTimeInSec*100;				//Calculo D: resto la entrada anterior a la actual
-	
-	ITerm = cutNormalizeLimits( ITerm );
-	dInput = cutNormalizeLimits( dInput );
+float pidCalculate(float input) {
+    if (!pidControl1.enablePID) {
+        return 0;
+    }
+    pidControl1.input = normalize(input);
+    float error = pidControl1.setPoint - pidControl1.input;  													// Error: diferencia entre el valor seteado y el de entrada
 
-	/*Compute PID Output*/
-	pidControl1.output = (pidControl1.kp * error) + ITerm - (pidControl1.kd * dInput);	//opero con los 3 parametros para obtener salida, el D se resta para evitar la kick derivate
-	
-	pidControl1.output = cutNormalizeLimits( pidControl1.output );
+    float kTerm = pidControl1.kp * error;                                                                        // calculo P: error multiplicado por su constante
+    pidControl1.iTerm += pidControl1.sampleTimeInSec * pidControl1.ki * error;                                   // calculo I: acumulo error multiplicado por ki contemplando el tiempo transcurrido desd el anterior
+    float dTerm = ((pidControl1.input - pidControl1.lastInput) * pidControl1.kd) / pidControl1.sampleTimeInSec;  // Calculo D: resto la entrada anterior a la actual
 
-	lastInput = pidControl1.input;
-	return pidControl1.output;
+    pidControl1.iTerm = cutNormalizeLimits(pidControl1.iTerm);
+    dTerm = cutNormalizeLimits(dTerm);
+
+    /*Suma de errores*/
+    pidControl1.output = kTerm + pidControl1.iTerm - dTerm;  													// opero con los 3 parametros para obtener salida, el D se resta para evitar la kick derivate
+    pidControl1.output = cutNormalizeLimits(pidControl1.output);
+
+    pidControl1.lastInput = pidControl1.input;
+    return pidControl1.output;
 }
- 
-void pidSetPointAngle(float angulo){
-	pidControl1.setPoint= normalizeAngle( angulo );
+
+/*
+ * Funcion para asignar un nuevo setPoint
+ */
+void pidSetSetPoint(float value) {
+    pidControl1.setPoint = normalize(value);
+}
+
+/*
+ * Funcion para obtener el setPoint actual
+ */
+float pidGetSetPoint(void) {
+    return pidControl1.setPoint * 100.00;
 }
 
 /*
  * 	Funcion para cargar los parametros al filtro PID
- *	Todos los parametros deben estar entre 0.00 y 1.00
-*/ 
-void pidSetConstants(float KP,float KI,float KD){
-
-	pidControl1.kp = KP;
-	pidControl1.ki = KI;																 
-	pidControl1.kd = KD;
-	ITerm = 0.00;
-	lastInput = 0.00;
-
-	printf("SEEEEEEEEEEET CONSTAAAAAAAAAAAAAANTT KD: %f\n",pidControl1.kd);
+ */
+void pidSetConstants(float KP, float KI, float KD) {
+    pidControl1.kp = KP;
+    pidControl1.ki = KI;
+    pidControl1.kd = KD;
+    pidControl1.iTerm = 0.00;
+    pidControl1.lastInput = 0.00;
 }

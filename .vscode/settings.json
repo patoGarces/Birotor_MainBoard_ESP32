@@ -47,8 +47,15 @@
         "gps_ubx.h": "c",
         "string.h": "c",
         "ws2812.h": "c",
-        "i2s.h": "c"
+        "i2s.h": "c",
+        "ledc.h": "c",
+        "esp_task_wdt.h": "c",
+        "ets_sys.h": "c",
+        "esp_bt_device.h": "c",
+        "esp_gap_bt_api.h": "c",
+        "i2s_std.h": "c",
+        "cmath": "c"
     },
-    "idf.portWin": "COM12",
+    "idf.portWin": "COM10",
     "idf.adapterTargetName": "esp32"
 }
