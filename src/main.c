@@ -108,7 +108,7 @@ static void imuControlHandler(void *pvParameters){
     while(1){
 
         if(xQueueReceive(newAnglesQueue,&newAngles,pdMS_TO_TICKS(10))){     // TODO: ESTA TODO sincronizado a partir del MPU, ESTO ESTA MAL
-            if (pidGetEnable()) {//} && droneControl.flyMode == FLY_MODE_STABILIZED) {   // TODO: descomentar
+            if (pidGetEnable() && droneControl.flyMode == FLY_MODE_STABILIZED) {   // TODO: descomentar
 
                 // statusToSend.pitch = newAngles[AXIS_ANGLE_Y];
                 // statusToSend.roll = newAngles[AXIS_ANGLE_X];

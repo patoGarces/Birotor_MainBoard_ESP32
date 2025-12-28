@@ -56,6 +56,6 @@
         "i2s_std.h": "c",
         "cmath": "c"
     },
-    "idf.portWin": "COM10",
+    "idf.portWin": "COM7",
     "idf.adapterTargetName": "esp32"
 }
