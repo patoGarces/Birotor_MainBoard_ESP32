@@ -2,31 +2,47 @@
 
 #include "stdio.h"
 
-pid_control_t pidControl1;
+pid_control_t pidControl[CANT_PIDS];
 
 float normalize(float value);
 
-esp_err_t pidInit(pid_init_t initParams) {
-    if (initParams.sampleTimeInMs > 1000.00 || initParams.sampleTimeInMs < 1.00) {
-        return ESP_FAIL;
+pid_struct_t convertPidFloatToStruct(pid_floats_t pidFloat, float period) {
+    pid_struct_t pidStruct = {
+        .kp = pidFloat.kp,
+        .ki = pidFloat.ki,
+        .kd = pidFloat.kd,
+        .setPoint = pidFloat.setPoint,
+        .sampleTimeInMs = period
+    };
+    return pidStruct;
+}
+
+void pidInit(pid_init_t initConfig) {
+
+    for(uint8_t i=0;i<CANT_PIDS;i++) { 
+        pidControl[i].sampleTimeInSec = initConfig.pids[i].sampleTimeInMs / 1000.00;
+        pidControl[i].enablePID = false;
+        pidSetConstants(i,initConfig.pids[i].kp, initConfig.pids[i].ki, initConfig.pids[i].kd);
+        pidSetSetPoint(i,initConfig.pids[i].setPoint);
+
+        printf("pidInit -> sampleTime %d: %dms\f",i, initConfig.pids[i].sampleTimeInMs);
     }
-    pidControl1.sampleTimeInSec = (float)initParams.sampleTimeInMs / 1000;
-    pidControl1.enablePID = false;
-    pidSetConstants(initParams.kp, initParams.ki, initParams.kd);
-    pidSetSetPoint(initParams.initSetPoint);
-    return ESP_OK;
 }
 
-void pidSetEnable(void) {
-    pidControl1.enablePID = true;
+void pidSetEnable(uint8_t numPid) {
+    pidControl[numPid].iTerm = 0.00;
+    pidControl[numPid].lastInput = 0.00;
+    pidControl[numPid].enablePID = true;
 }
 
-void pidSetDisable(void) {
-    pidControl1.enablePID = false;
+void pidSetDisable(uint8_t numPid) {
+    pidControl[numPid].enablePID = false;
+    // pidControl[numPid].iTerm = 0.00;
+    // pidControl[numPid].lastInput = 0.00;
 }
 
-bool pidGetEnable(void) {
-    return pidControl1.enablePID;
+bool pidGetEnable(uint8_t numPid) {
+    return pidControl[numPid].enablePID;
 }
 
 float normalize(float value) {
@@ -47,49 +63,55 @@ float cutNormalizeLimits(float normalizeInput) {
  * @param input entra en rango [-100;100]
  * @return resultado del PID normalizado [-1.00;1.00]
  */
-float pidCalculate(float input) {
-    if (!pidControl1.enablePID) {
-        return 0;
-    }
-    pidControl1.input = normalize(input);
-    float error = pidControl1.setPoint - pidControl1.input;  													// Error: diferencia entre el valor seteado y el de entrada
+float pidCalculate(uint8_t numPid,float input) {
+        if (!pidControl[numPid].enablePID) {
+            return 0;
+        }
+        
+        float normalizeInput = normalize(input);
+        float error = pidControl[numPid].setPoint - normalizeInput;  													  // Error: diferencia entre el valor seteado y el de entrada
+        
+        pidControl[numPid].iTerm += pidControl[numPid].sampleTimeInSec * pidControl[numPid].ki * error;                                // calculo I: acumulo error multiplicado por ki contemplando el tiempo transcurrido desd el anterior
+        float dTerm = ((normalizeInput - pidControl[numPid].lastInput) * pidControl[numPid].kd) / pidControl[numPid].sampleTimeInSec;  // Calculo D: resto la entrada anterior a la actual
 
-    float kTerm = pidControl1.kp * error;                                                                        // calculo P: error multiplicado por su constante
-    pidControl1.iTerm += pidControl1.sampleTimeInSec * pidControl1.ki * error;                                   // calculo I: acumulo error multiplicado por ki contemplando el tiempo transcurrido desd el anterior
-    float dTerm = ((pidControl1.input - pidControl1.lastInput) * pidControl1.kd) / pidControl1.sampleTimeInSec;  // Calculo D: resto la entrada anterior a la actual
+        pidControl[numPid].iTerm = cutNormalizeLimits(pidControl[numPid].iTerm);
+        dTerm = cutNormalizeLimits(dTerm);
 
-    pidControl1.iTerm = cutNormalizeLimits(pidControl1.iTerm);
-    dTerm = cutNormalizeLimits(dTerm);
+        /*Suma de errores*/
+        float output = (pidControl[numPid].kp * error) + pidControl[numPid].iTerm - dTerm;  													// opero con los 3 parametros para obtener salida, el D se resta para evitar la kick derivate
 
-    /*Suma de errores*/
-    pidControl1.output = kTerm + pidControl1.iTerm - dTerm;  													// opero con los 3 parametros para obtener salida, el D se resta para evitar la kick derivate
-    pidControl1.output = cutNormalizeLimits(pidControl1.output);
+        // printf(">pidIn:%f\n>normPid:%f\n",input,normalizeInput);
 
-    pidControl1.lastInput = pidControl1.input;
-    return pidControl1.output;
+        pidControl[numPid].lastInput = normalizeInput;
+        return cutNormalizeLimits(output);
 }
 
 /*
  * Funcion para asignar un nuevo setPoint
  */
-void pidSetSetPoint(float value) {
-    pidControl1.setPoint = normalize(value);
+void pidSetSetPoint(uint8_t numPid,float value) {
+    pidControl[numPid].setPoint = normalize(value);
 }
 
 /*
  * Funcion para obtener el setPoint actual
  */
-float pidGetSetPoint(void) {
-    return pidControl1.setPoint * 100.00;
+float pidGetSetPoint(uint8_t numPid) {
+    return pidControl[numPid].setPoint * 100.00;
 }
 
 /*
  * 	Funcion para cargar los parametros al filtro PID
  */
-void pidSetConstants(float KP, float KI, float KD) {
-    pidControl1.kp = KP;
-    pidControl1.ki = KI;
-    pidControl1.kd = KD;
-    pidControl1.iTerm = 0.00;
-    pidControl1.lastInput = 0.00;
+void pidSetConstants(uint8_t numPid,float KP, float KI, float KD) {
+    pidControl[numPid].kp = KP;
+    pidControl[numPid].ki = KI;
+    pidControl[numPid].kd = KD;
+    pidControl[numPid].iTerm = 0.00;
+    pidControl[numPid].lastInput = 0.00;
+}
+
+void pidClearTerms(uint8_t numPid) {
+    pidControl[numPid].iTerm = 0.00;
+    pidControl[numPid].lastInput = 0.00;
 }

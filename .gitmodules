@@ -1,6 +1,3 @@
-[submodule "components/MPU6050"]
-	path = components/MPU6050
-	url = https://github.com/patoGarces/MPU6050_Components_ESP32
 [submodule "components/BT_CLASSIC"]
 	path = components/BT_CLASSIC
 	url = https://github.com/patoGarces/BT_CLASSIC_Components_ESP32

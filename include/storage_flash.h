@@ -2,17 +2,10 @@
 #define __STORAGE_FLASH_H__
 
 #include "stdio.h"
-
-typedef struct{
-    float kp;
-    float ki;
-    float kd;
-    float center_angle;
-    float safety_limits;
-}pid_params_t;
+#include "main.h"
 
 void storageInit(void);
-void storageWritePidParams(pid_params_t params);
-pid_params_t storageReadPidParams(void);
+void storageLocalConfig(robot_local_configs_t params);
+robot_local_configs_t getFromStorageLocalConfig(void);
 
 #endif
