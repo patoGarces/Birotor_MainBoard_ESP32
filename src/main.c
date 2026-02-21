@@ -14,6 +14,7 @@
 #include "PID.h"
 #include "storage_flash.h"
 #include "mpu6050_wrapper.h"
+#include "AS5600.h"
 
 /* Incluyo componentes */
 #include "../components/SBUS_COMMS/include/SBUS_COMMS.h"
@@ -25,23 +26,14 @@
 #define GRAPH_ARDUINO_PLOTTER   false
 #define DEVICE_BT_NAME          "Birotor Drone"
 
-#define VEL_MOTORS_ARMED        10
-
-#define CH_AIL_GAIN             0.5 
-#define CH_RUD_GAIN             1 
-
-#define DUAL_RATES_SOFT         0.20
-#define DUAL_RATES_MEDIUM       0.40
-#define DUAL_RATES_HARD         0.65
-
 extern QueueHandle_t mpu6050QueueHandler;                   // Recibo nuevos angulos obtenidos del MPU
 QueueHandle_t queueNewSBUS;
 QueueHandle_t newPidParamsQueue;                            // Recibo nuevos parametros relacionados al pid
 QueueHandle_t outputMotorQueue;                             // Envio nuevos valores de salida para el control de motores
 QueueHandle_t queueReceiveControl;
+QueueHandle_t queueMotorsPosition;
 
 status_robot_t statusDrone;                                  // Estructura que contiene todos los parametros de status a enviar a la app
-
 
 const rc_channels_t failsafeChannels = {
     .aileron = 50,
@@ -51,24 +43,8 @@ const rc_channels_t failsafeChannels = {
 
 const uint8_t failsafePosChannels[6] = { 0,0,50,50,50,50 };
 
-uint8_t cutRangeExceed(int16_t value, uint8_t min, uint8_t max){
-    if (value > max) {
-        return max;
-    }
-    if (value < min) {
-        return min;
-    }
-    return value;
-}
-
-float cutRangeNorm(float value, float range) {
-    if (value > range) {
-        return range;
-    }
-    if (value < -range) {
-        return -range;
-    }
-    return value;
+static inline float clamp(float v, float min, float max) {
+    return v < min ? min : (v > max ? max : v);
 }
 
 void armedMotors(uint8_t armed) {
@@ -91,8 +67,8 @@ void failsafeMode(uint8_t failsafe) {
     if (failsafe) {
         statusDrone.flyMode = FLY_MODE_FAILSAFE;
         statusLedUpdate(STATUS_LED_FAILSAFE);
-        pwmSetOutput(OUTPUT_CHANNEL_SERVO_L,failsafePosChannels[OUTPUT_CHANNEL_SERVO_L]);
-        pwmSetOutput(OUTPUT_CHANNEL_SERVO_R,failsafePosChannels[OUTPUT_CHANNEL_SERVO_R]);
+        pwmSetOutput(OUTPUT_CHANNEL_SERVO_L,failsafePosChannels[OUTPUT_CHANNEL_SERVO_L] * 10.00);
+        pwmSetOutput(OUTPUT_CHANNEL_SERVO_R,failsafePosChannels[OUTPUT_CHANNEL_SERVO_R] * 10.00);
         printf("FailsafeMode activate\n");
     }
     else {
@@ -101,11 +77,25 @@ void failsafeMode(uint8_t failsafe) {
     }
 }
 
-static void imuControlHandler(void *pvParameters){
+static void imuControlHandler(void *pvParameters) {
     float newAngles[3];
+    as5600_queue_data_t sensorPositionData = {0};
     uint8_t cont = 0;
+    float phaseMotorR = 0.00, phaseMotorL = 0.00;
 
-    while(1){
+    while(1) {
+
+        if (xQueueReceive(queueMotorsPosition, &sensorPositionData, 0)) {
+            if (sensorPositionData.side == AS5600_IZQ) {
+                phaseMotorL = sinf(sensorPositionData.radAngle + AS5600_MOUNT_OFFSET_TETHA_L) * SINE_RESPONSE_GAIN;
+                // printf(">angle_izq: %f\n>angle_rad_izq: %f\n", phaseMotorL, sensorPositionData.radAngle);
+            }
+
+            if (sensorPositionData.side == AS5600_DER) {
+                phaseMotorR = sinf(sensorPositionData.radAngle + AS5600_MOUNT_OFFSET_TETHA_R) * SINE_RESPONSE_GAIN;
+                // printf(">angle_der: %f\n>angle_rad_der: %f\n", phaseMotorR, sensorPositionData.radAngle);
+            }
+        }
 
         if (xQueueReceive(mpu6050QueueHandler,&newAngles, pdMS_TO_TICKS(10))) {
             // if (pidGetEnable(PID_PITCH) && statusDrone.flyMode == FLY_MODE_STABILIZED) {
@@ -114,27 +104,11 @@ static void imuControlHandler(void *pvParameters){
                 statusDrone.actualRoll = newAngles[ANGLE_ROLL];
                 statusDrone.actualYaw = newAngles[ANGLE_YAW];
 
+                // printf("pitch: %f\n", statusDrone.actualPitch);
+
                 float outputPidPitch = pidCalculate(PID_PITCH, newAngles[ANGLE_PITCH]) * GAIN_PITCH_PID_OUTPUT;
                 float outputPidRoll = pidCalculate(PID_ROLL, newAngles[ANGLE_ROLL]) * GAIN_ROLL_PID_OUTPUT;
 
-                // cont++;
-                // if (cont>50) {
-                //     // Envio log para graficar en arduino serial plotter
-                //     printf("angle_x:%f,output_pid_raw:%f,output_pid:%f\n",newAngles[ANGLE_PITCH],outputPidRaw,outputPidElevator);
-                //     cont=0;
-                // }
-
-                // if(GRAPH_ARDUINO_PLOTTER){
-                    //Envio log para graficar en arduino serial plotter
-                    // printf("angle_x:%f,set_point: %f,output_pid: %f, output_motor:%d\n",newAngles[AXIS_ANGLE_Y],CENTER_ANGLE_MOUNTED,outputPid,outputMotors.motorL);
-                // }
-                // gpio_set_level(PIN_OSCILO, 0);
-
-                // cont++;
-                // if(cont>50){
-                //     printf("angle:%f,set_point: %f,output_pid: %f\n",newAngles[AXIS_ANGLE_X],pidGetPointAngle(),outputPid);
-                //     cont=0;
-                // }
             // }
             // else if (statusDrone.flyMode == FLY_MODE_ATTI) {
             //     controlOutput = rcChannels;
@@ -146,31 +120,48 @@ static void imuControlHandler(void *pvParameters){
             float mixedServoL = -outputPidPitch + (statusDrone.rcControl.rudder * CH_RUD_GAIN);
             float mixedServoR = outputPidPitch + (statusDrone.rcControl.rudder * CH_RUD_GAIN);
             
-            statusDrone.outputControl.servoL = (cutRangeNorm(mixedServoL, 0.5) + 0.5) * 100.00;
-            statusDrone.outputControl.servoR = (cutRangeNorm(mixedServoR, 0.5) + 0.5) * 100.00;
+            statusDrone.outputControl.servoL = (clamp(mixedServoL, -0.5, 0.5) + 0.5) * 100.00;
+            statusDrone.outputControl.servoR = (clamp(mixedServoR, -0.5, 0.5) + 0.5) * 100.00;
 
             pwmSetOutput(OUTPUT_CHANNEL_SERVO_L,statusDrone.outputControl.servoL);
             pwmSetOutput(OUTPUT_CHANNEL_SERVO_R,statusDrone.outputControl.servoR);
 
             if (statusDrone.motorArmed) {
-                if( statusDrone.rcControl.throttle >= 0.0) {
-                    float mixedMotorL = ((statusDrone.rcControl.throttle - 0.25) * 2.00) + outputPidRoll;
-                    float mixedMotorR = ((statusDrone.rcControl.throttle - 0.25) * 2.00) - outputPidRoll;
+                float t = statusDrone.rcControl.throttle * 2.0f;
+                t = clamp(t, 0.0f, 1.0f);
 
-                    mixedMotorL = (cutRangeNorm(mixedMotorL, 0.5) + 0.5) * 100.00;
-                    mixedMotorR = (cutRangeNorm(mixedMotorR, 0.5) + 0.5) * 100.00;
+                outputPidRoll = 0.00; // TODO: borrar
+                // outputPidPitch = 0.00; // TODO: borrar
+                float baseL = t + outputPidRoll;
+                float baseR = t - outputPidRoll;
 
-                    statusDrone.outputControl.motorL = cutRangeExceed(VEL_MOTORS_ARMED + (((mixedMotorL - 50) * 90.00) / 50.00), 10, 100);
-                    statusDrone.outputControl.motorR = cutRangeExceed(VEL_MOTORS_ARMED + (((mixedMotorR - 50) * 90.00) / 50.00), 10, 100);
-                }
+                float anglePhaseModulated = phaseMotorR * outputPidPitch;
+
+                float mixL = baseL * (1.0f + (phaseMotorL * outputPidPitch));
+                float mixR = baseR * (1.0f + anglePhaseModulated);
+
+                mixL = clamp(mixL, 0.0f, 1.0f);
+                mixR = clamp(mixR, 0.0f, 1.0f);
+
+                statusDrone.outputControl.motorL = VEL_MOTORS_ARMED + mixL * (100.0f - VEL_MOTORS_ARMED);
+                statusDrone.outputControl.motorR = VEL_MOTORS_ARMED + mixR * (100.0f - VEL_MOTORS_ARMED);
+
+                printf(">sinR: %f\n>t: %f\n>pitch: %f\n>mixL: %f\n>mixR: %f\n>angleModulated: %f\n", phaseMotorR, t, outputPidPitch, mixL, mixR, anglePhaseModulated);
             }
-            pwmSetOutput(OUTPUT_CHANNEL_MOT_L, statusDrone.outputControl.motorL);
-            pwmSetOutput(OUTPUT_CHANNEL_MOT_R, statusDrone.outputControl.motorR);
+            // #ifdef TELEPLOT_OUTPUT
+                // printf(">sinL: %f, mixL: %f", phaseMotorL, mixL);
+            // #else 
+                // pwmSetOutput(OUTPUT_CHANNEL_MOT_L, statusDrone.outputControl.motorL * 10.00);
+                // pwmSetOutput(OUTPUT_CHANNEL_MOT_R, statusDrone.outputControl.motorR * 10.00);
+            // #endif
 
-            ESP_LOGI("imuControlHandler","thr: %f, ail: %f, motorL: %d, motorR: %d",statusDrone.rcControl.throttle, statusDrone.rcControl.aileron, statusDrone.outputControl.motorL, statusDrone.outputControl.motorR);
+            // ESP_LOGI("imuControlHandler","servoL: %d, motorL: %d",statusDrone.outputControl.servoL, statusDrone.outputControl.motorL);
+
+            // ESP_LOGI("imuControlHandler","thr: %f, ail: %f, motorL: %d, motorR: %d",statusDrone.rcControl.throttle, statusDrone.rcControl.aileron, statusDrone.outputControl.motorL, statusDrone.outputControl.motorR);
 
             // ESP_LOGI("imuControlHandler","pitchAngle: %f, ail: %f, pidOut: %f", statusDrone.actualPitch, statusDrone.rcControl.elevator, outputPidPitch);
             // ESP_LOGI("imuControlHandler","thr: %f, ail: %f, elev: %f, rudd: %f",statusDrone.rcControl.throttle, statusDrone.rcControl.aileron, statusDrone.rcControl.elevator, statusDrone.rcControl.rudder);
+            // ESP_LOGI("imuControlHandler","L: %d\tR: %d", statusDrone.outputControl.motorL, statusDrone.outputControl.motorR);
         }
     }
 }
@@ -199,8 +190,8 @@ static void attitudeControl(void *pvParameters){
     uint8_t failsafeLastState = false;
     channels_control_t newControlMessage;
 
-    while(true){
-        if( xQueueReceive(queueNewSBUS,&newControlMessage, pdMS_TO_TICKS(10))){
+    while(true) {
+        if (xQueueReceive(queueNewSBUS,&newControlMessage, pdMS_TO_TICKS(10))){
 
             if (newControlMessage.err) {
                 if(!failsafeLastState) {
@@ -266,6 +257,7 @@ static void attitudeControl(void *pvParameters){
                 float targetAileron = statusDrone.rcControl.aileron * MAX_ANGLE_CONTROL;
                 // float targetRudder = statusDrone.rcControl.rudder * MAX_ANGLE_CONTROL;
                 pidSetSetPoint(PID_PITCH, targetElevator);
+                printf(">setpoint pitch: %f\n", targetElevator);
                 pidSetSetPoint(PID_ROLL, targetAileron);
 
                 // ESP_LOGI("attitudeControl", "elevator: %f, targetElevator: %f", statusDrone.rcControl.elevator, targetElevator);
@@ -306,21 +298,21 @@ void initializeTest(void) {
     }
 
     for(posTest = 0; posTest < 2; posTest++){
-        pwmSetOutput(OUTPUT_CHANNEL_SERVO_L,50);
-        pwmSetOutput(OUTPUT_CHANNEL_SERVO_R,50);
+        pwmSetOutput(OUTPUT_CHANNEL_SERVO_L, 500);
+        pwmSetOutput(OUTPUT_CHANNEL_SERVO_R, 500);
         vTaskDelay(pdMS_TO_TICKS(200));
 
-        pwmSetOutput(OUTPUT_CHANNEL_SERVO_L,limitMin);
-        pwmSetOutput(OUTPUT_CHANNEL_SERVO_R,limitMax);
+        pwmSetOutput(OUTPUT_CHANNEL_SERVO_L,limitMin * 10.00);
+        pwmSetOutput(OUTPUT_CHANNEL_SERVO_R,limitMax * 10.00);
         vTaskDelay(pdMS_TO_TICKS(200));
 
-        pwmSetOutput(OUTPUT_CHANNEL_SERVO_L,limitMax);
-        pwmSetOutput(OUTPUT_CHANNEL_SERVO_R,limitMin);
+        pwmSetOutput(OUTPUT_CHANNEL_SERVO_L,limitMax * 10.00);
+        pwmSetOutput(OUTPUT_CHANNEL_SERVO_R,limitMin * 10.00);
         vTaskDelay(pdMS_TO_TICKS(200));
     }
 
-    pwmSetOutput(OUTPUT_CHANNEL_SERVO_L,50);
-    pwmSetOutput(OUTPUT_CHANNEL_SERVO_R,50);
+    pwmSetOutput(OUTPUT_CHANNEL_SERVO_L, 500);
+    pwmSetOutput(OUTPUT_CHANNEL_SERVO_R,500);
 }
 
 void app_main() {
@@ -338,14 +330,37 @@ void app_main() {
     queueNewSBUS = xQueueCreate(1,sizeof(channels_control_t));
     queueReceiveControl = xQueueCreate(1, sizeof(velocity_command_t));
     newPidParamsQueue = xQueueCreate(1, sizeof(pid_settings_comms_t));
+    queueMotorsPosition = xQueueCreate(5, sizeof(as5600_queue_data_t));
 
     statusLedInit(GPIO_LED_STATUS);
 
-    pwmServoInit(GPIO_MOTOR_L,GPIO_MOTOR_R,GPIO_SERVO_L,GPIO_SERVO_R,GPIO_LED_MOTOR_L,GPIO_LED_MOTOR_R);
+    pwm_servo_init_t configServo = {
+        .hsPwm1Gpio = GPIO_MOTOR_L,
+        .hsPwm2Gpio = GPIO_MOTOR_R,
+        .lsPwm1Gpio = GPIO_SERVO_L,
+        .lsPwm2Gpio = GPIO_SERVO_R,
+        .lsPwm3Gpio = GPIO_LED_MOTOR_L,
+        .lsPwm4Gpio = GPIO_LED_MOTOR_R
+    };
+    pwmServoInit(configServo);
 
-    for(uint8_t channel=0;channel<6;channel++){
-        pwmSetOutput(channel,failsafePosChannels[channel]);
+    for (uint8_t channel=0; channel<6; channel++) {
+        pwmSetOutput(channel,failsafePosChannels[channel] * 10.00);
     }
+
+    as5600_config_t config = {
+        .freq = AS5600_PWM_230HZ,
+        .gpioInIzq =  GPIO_AS5600_IZQ_IN,
+        .gpioSdaIzq = GPIO_AS5600_IZQ_SDA,  
+        .gpioSclIzq =  GPIO_AS5600_IZQ_SCL,   
+        .gpioInDer = GPIO_AS5600_DER_IN,   
+        .gpioSclDer = GPIO_AS5600_DER_SCL,    
+        .gpioSdaDer = GPIO_AS5600_DER_SDA,  
+        .queue = queueMotorsPosition,
+        .core = AS5600_HANDLER_CORE,
+        .priority = AS5600_HANDLER_PRIORITY
+    };
+    as5600Init(&config);
     
     sbusInit(UART_SBUS_NUM,GPIO_SBUS_TX,GPIO_SBUS_RX);
     storageInit();
@@ -369,8 +384,8 @@ void app_main() {
     statusDrone.localConfig.pids[PID_PITCH].setPoint = 0.0;
 
     statusDrone.localConfig.pids[PID_ROLL].kp = 1.0;
-    statusDrone.localConfig.pids[PID_ROLL].ki = 0.0;
-    statusDrone.localConfig.pids[PID_ROLL].kd = 0.0;
+    statusDrone.localConfig.pids[PID_ROLL].ki = 0.2;
+    statusDrone.localConfig.pids[PID_ROLL].kd = 0.3;
     statusDrone.localConfig.pids[PID_ROLL].setPoint = 0.0;
 
     statusDrone.localConfig.pids[PID_YAW].kp = 1.0;
@@ -407,6 +422,7 @@ void app_main() {
     xTaskCreate(attitudeControl,"attitude control Task",4096,NULL,4,NULL);
 
     statusLedUpdate(STATUS_LED_WAITING_ARM);
+
     // gpsUbxInit(UART_GPS_NUM,BAUDRATE_GPS_UBX,GPIO_GPS_RX,GPIO_GPS_TX);
 
     // while(1){

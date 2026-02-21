@@ -2,15 +2,28 @@
 #define __MAIN_H__
 #include "stdint.h"
 
-#define PERIOD_IMU_MS   2.5     
+#define TELEPLOT_OUTPUT
+
+#define VEL_MOTORS_ARMED        15
+
+#define CH_AIL_GAIN             0.5 
+#define CH_RUD_GAIN             1 
+
+#define DUAL_RATES_SOFT         0.20
+#define DUAL_RATES_MEDIUM       0.40
+#define DUAL_RATES_HARD         1.00 // 0.65  
 
 #define COMMS_HANDLER_CORE          PRO_CPU_NUM     // core 0
 #define IMU_HANDLER_CORE            APP_CPU_NUM     // core 1
+#define AS5600_HANDLER_CORE         APP_CPU_NUM     // core 1
 
-#define MPU_HANDLER_PRIORITY        configMAX_PRIORITIES - 1
-#define IMU_HANDLER_PRIORITY        configMAX_PRIORITIES - 2
-#define ATTITUDE_HANDLER_PRIORITY   configMAX_PRIORITIES - 3
-#define COMM_HANDLER_PRIORITY       configMAX_PRIORITIES - 4
+#define AS5600_HANDLER_PRIORITY     configMAX_PRIORITIES - 1
+#define MPU_HANDLER_PRIORITY        configMAX_PRIORITIES - 2
+#define IMU_HANDLER_PRIORITY        configMAX_PRIORITIES - 3
+#define ATTITUDE_HANDLER_PRIORITY   configMAX_PRIORITIES - 4
+#define COMM_HANDLER_PRIORITY       configMAX_PRIORITIES - 5
+
+#define PERIOD_IMU_MS   2.5   
 
 #define PERIOD_PID_PRIMARY_MS       100
 #define PERIOD_PID_SECONDARY_MS     40
@@ -20,6 +33,10 @@
 #define MAX_ANGLE_CONTROL           10.0
 #define GAIN_PITCH_PID_OUTPUT       5.0
 #define GAIN_ROLL_PID_OUTPUT       5.0
+
+#define SINE_RESPONSE_GAIN      1.0//0.3                     // Representa la ganancia del seno del angulo del AS5600 sobre el motor, a mayor valor, el motor frena y acelera con mayor agresividad
+#define AS5600_MOUNT_OFFSET_TETHA_L 0                   // Offset de donde esta el 0 del eje del motor respecto al frente del drone, EN RADIANES
+#define AS5600_MOUNT_OFFSET_TETHA_R 0                   // Offset de donde esta el 0 del eje del motor respecto al frente del drone, EN RADIANES
 
 #define PIN_LED         2  //27 en mainBoard
 #define PIN_OSCILO      47  //5
@@ -50,14 +67,15 @@
 #define GPIO_MPU_SDA        40
 #define GPIO_MPU_SCL        41
 
-#define CENTER_ANGLE_MOUNTED    0.00  
+// Pinout AS5600
+#define GPIO_AS5600_IZQ_IN  1    
+#define GPIO_AS5600_IZQ_SDA 2    
+#define GPIO_AS5600_IZQ_SCL 42    
+#define GPIO_AS5600_DER_IN  4    
+#define GPIO_AS5600_DER_SCL 6    
+#define GPIO_AS5600_DER_SDA 5    
 
-#define OUTPUT_CHANNEL_MOT_L      0
-#define OUTPUT_CHANNEL_MOT_R      1
-#define OUTPUT_CHANNEL_SERVO_L    2
-#define OUTPUT_CHANNEL_SERVO_R    3
-#define OUTPUT_CHANNEL_LED_MOT_L  4
-#define OUTPUT_CHANNEL_LED_MOT_R  5
+#define CENTER_ANGLE_MOUNTED    0.00  
 
 #define CANT_PIDS 4 // TODO: ajustar cantidad
 

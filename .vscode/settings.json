@@ -56,6 +56,7 @@
         "i2s_std.h": "c",
         "cmath": "c"
     },
-    "idf.portWin": "COM9",
-    "idf.adapterTargetName": "esp32"
+    "idf.portWin": "COM6",
+    "idf.adapterTargetName": "esp32",
+    "idf.currentSetup": "C:\\Users\\Patri\\esp\\esp-idf"
 }
