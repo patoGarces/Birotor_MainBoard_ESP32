@@ -14,7 +14,6 @@
 #include "PID.h"
 #include "storage_flash.h"
 #include "mpu6050_wrapper.h"
-#include "AS5600.h"
 
 /* Incluyo componentes */
 #include "../components/SBUS_COMMS/include/SBUS_COMMS.h"
@@ -22,6 +21,7 @@
 #include "../components/SERVO_CONTROL/include/SERVO_CONTROL.h"
 #include "../components/GPS_UBX/include/GPS_UBX.h"
 #include "../components/WS2812/include/WS2812.h"
+#include "HALL_ENCODER.h"
 
 #define GRAPH_ARDUINO_PLOTTER   false
 #define DEVICE_BT_NAME          "Birotor Drone"

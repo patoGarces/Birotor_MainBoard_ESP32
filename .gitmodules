@@ -13,3 +13,6 @@
 [submodule "components/WS2812"]
 	path = components/WS2812
 	url = https://github.com/patoGarces/WS2812
+[submodule "components/HALL_ENCODER"]
+	path = components/HALL_ENCODER
+	url = https://github.com/patoGarces/HALL_ENCODER.git
